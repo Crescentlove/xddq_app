@@ -10,13 +10,18 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <!-- Sidebar -->
-        <StackPanel x:Name="Sidebar" Background="#2D2D30" Width="60" Grid.Column="0">
+        <Grid x:Name="Sidebar" Background="#2D2D30" Width="60" Grid.Column="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
             <!-- Hamburger Button -->
-            <Button x:Name="HamburgerButton" Click="HamburgerButton_Click" Width="60" Height="60" Background="Transparent">
+            <Button x:Name="HamburgerButton" Click="HamburgerButton_Click" Width="60" Height="60" Background="Transparent" Grid.Row="0">
                 <FontIcon Glyph="&#xE700;" FontFamily="Segoe MDL2 Assets" FontSize="24" Foreground="White"/>
             </Button>
             <!-- Navigation Items -->
-            <StackPanel x:Name="NavItemsPanel" Margin="0,20,0,0">
+            <StackPanel x:Name="NavItemsPanel" Margin="0,20,0,0" Grid.Row="1">
                 <Button x:Name="HomeNav" Click="HomeNav_Click" Background="Transparent" Height="48">
                     <FontIcon Glyph="&#xE80F;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="White"/>
                 </Button>
@@ -29,16 +34,16 @@
                 <Button x:Name="LogNav" Click="LogNav_Click" Background="Transparent" Height="48">
                     <FontIcon Glyph="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="White"/>
                 </Button>
+            </StackPanel>
+            <StackPanel Grid.Row="2" Margin="0,0,0,10">
                 <Button x:Name="AboutNav" Click="AboutNav_Click" Background="Transparent" Height="48">
                     <FontIcon Glyph="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="White"/>
                 </Button>
-            </StackPanel>
-            <StackPanel VerticalAlignment="Bottom" Margin="0,0,0,10">
                 <Button x:Name="SettingsNav" Click="SettingsNav_Click" Background="Transparent" Height="48">
                     <FontIcon Glyph="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="White"/>
                 </Button>
             </StackPanel>
-        </StackPanel>
+        </Grid>
         <!-- Main Content -->
         <Frame x:Name="MainFrame" Grid.Column="1"/>
     </Grid>

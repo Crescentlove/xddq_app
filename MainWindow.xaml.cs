@@ -90,7 +90,7 @@ namespace App_xddq
             await AddDeviceInfoAsync(infoPanel, adb, deviceId);
         }
 
-        private async Task AddDeviceInfoAsync(StackPanel infoPanel, AdbService adb, string deviceId)
+        private async Task AddDeviceInfoAsync(StackPanel infoPanel, AdbService adb, String deviceId)
         {
             // 分辨率
             string resolution = await adb.RunAdbCommandAsync($"-s {deviceId} shell wm size");
@@ -216,10 +216,17 @@ namespace App_xddq
 
         private void ShowAboutPage()
         {
-            var panel = new StackPanel { Margin = new Thickness(40) };
-            panel.Children.Add(new TextBlock { Text = "关于", FontSize = 24, Margin = new Thickness(0,0,0,20) });
-            panel.Children.Add(new TextBlock { Text = "作者：黑猪\nGitHub: https://github.com/Crescentlove\nTEL: 17602605570\nWechat: DCyannnn\nEmail: 15922132101@163.com", FontSize = 16, TextWrapping = TextWrapping.Wrap });
-            MainFrame.Content = panel;
+            var scroll = new ScrollViewer { Margin = new Thickness(40) };
+            var panel = new StackPanel();
+            var readmeText = new TextBlock {
+                FontSize = 14,
+                TextWrapping = TextWrapping.Wrap,
+                FontFamily = new FontFamily("Microsoft YaHei"),
+                Text = LoadReadme()
+            };
+            panel.Children.Add(readmeText);
+            scroll.Content = panel;
+            MainFrame.Content = scroll;
         }
 
         private void ShowSettingsPage()
@@ -265,6 +272,28 @@ namespace App_xddq
         private void IconCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             // 这里只是预留，后续可根据选择切换不同风格的图标
+        }
+
+        private string LoadReadme()
+        {
+            // 先尝试输出目录
+            string outputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "README.md");
+            if (File.Exists(outputPath))
+                return File.ReadAllText(outputPath);
+
+            // 再尝试项目根目录
+            try
+            {
+                var dir = Directory.GetParent(AppDomain.CurrentDomain.BaseDirectory);
+                if (dir != null && dir.Parent != null && dir.Parent.Parent != null)
+                {
+                    string projectPath = Path.Combine(dir.Parent.Parent.FullName, "README.md");
+                    if (File.Exists(projectPath))
+                        return File.ReadAllText(projectPath);
+                }
+            }
+            catch { }
+            return "README文件未找到。";
         }
     }
 }
