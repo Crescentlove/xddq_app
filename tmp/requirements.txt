@@ -1,0 +1,3 @@
+# requirements.txt
+# 在此文件中添加依赖包，例如：
+# adbutils

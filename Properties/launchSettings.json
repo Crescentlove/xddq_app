@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "App_xddq (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "App_xddq (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
