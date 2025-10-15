@@ -33,42 +33,101 @@ namespace App_xddq
 
         private void ShowHomePage()
         {
-            var panel = new StackPanel { Margin = new Thickness(40) };
-            panel.Children.Add(new TextBlock { Text = "首页", FontSize = 24, Margin = new Thickness(0,0,0,20) });
-            panel.Children.Add(new TextBlock { Text = "工具用途和README：", FontSize = 16, Margin = new Thickness(0,0,0,10) });
-            var readmeText = new TextBlock { FontSize = 14, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Microsoft YaHei") };
-            readmeText.Text = LoadReadme();
-            panel.Children.Add(readmeText);
-            MainFrame.Content = panel;
-        }
+            var grid = new Grid { Margin = new Thickness(40) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition()); // 内容区
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // 按钮区
 
-        private string ConvertMarkdownToHtml(string markdown)
-        {
-            // 简单处理，推荐后续集成Markdig等库
-            string html = $"<html><head><meta charset='utf-8'></head><body style='font-family:Microsoft YaHei;font-size:16px;'>{System.Net.WebUtility.HtmlEncode(markdown).Replace("\n", "<br>")}</body></html>";
-            return html;
-        }
+            var infoPanel = new StackPanel();
+            infoPanel.Children.Add(new TextBlock { Text = "首页", FontSize = 24, Margin = new Thickness(0,0,0,20) });
+            infoPanel.Children.Add(new TextBlock { Text = "请先连接手机，连接后将显示设备信息。", FontSize = 16, Margin = new Thickness(0,0,0,10) });
+            Grid.SetColumn(infoPanel, 0);
+            grid.Children.Add(infoPanel);
 
-        private string LoadReadme()
-        {
-            // 先尝试输出目录
-            string outputPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "README.md");
-            if (File.Exists(outputPath))
-                return File.ReadAllText(outputPath);
-
-            // 再尝试项目根目录
-            try
+            var connectBtn = new Button
             {
-                var dir = Directory.GetParent(AppDomain.CurrentDomain.BaseDirectory);
-                if (dir != null && dir.Parent != null && dir.Parent.Parent != null)
+                Content = new StackPanel {
+                    Orientation = Orientation.Horizontal,
+                    Children = {
+                        new FontIcon { Glyph = "\uE88B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 20 }, // USB图标
+                        new TextBlock { Text = "连接手机", Margin = new Thickness(5,0,0,0), FontSize = 14 }
+                    }
+                },
+                Margin = new Thickness(0,0,0,0),
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            connectBtn.Click += async (s, e) => await ConnectPhoneAndShowInfo(infoPanel);
+            Grid.SetColumn(connectBtn, 1);
+            grid.Children.Add(connectBtn);
+
+            MainFrame.Content = grid;
+            // 程序启动自动连接
+            _ = ConnectPhoneAndShowInfo(infoPanel);
+        }
+
+        private async Task ConnectPhoneAndShowInfo(StackPanel infoPanel)
+        {
+            infoPanel.Children.Clear();
+            infoPanel.Children.Add(new TextBlock { Text = "首页", FontSize = 24, Margin = new Thickness(0,0,0,20) });
+            var adb = new AdbService();
+            string devices = await adb.GetDevicesAsync();
+            var lines = devices.Split('\n');
+            string deviceId = null;
+            foreach (var line in lines)
+            {
+                if (line.Contains("\tdevice"))
                 {
-                    string projectPath = Path.Combine(dir.Parent.Parent.FullName, "README.md");
-                    if (File.Exists(projectPath))
-                        return File.ReadAllText(projectPath);
+                    deviceId = line.Split('\t')[0].Trim();
+                    break;
                 }
             }
-            catch { }
-            return "README文件未找到。";
+            if (string.IsNullOrEmpty(deviceId))
+            {
+                infoPanel.Children.Add(new TextBlock { Text = "未检测到设备，请检查USB连接和授权。", FontSize = 16, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 0, 0)) });
+                return;
+            }
+            infoPanel.Children.Add(new TextBlock { Text = $"已连接设备: {deviceId}", FontSize = 16, Margin = new Thickness(0,10,0,0) });
+            // 查询所有可用信息
+            await AddDeviceInfoAsync(infoPanel, adb, deviceId);
+        }
+
+        private async Task AddDeviceInfoAsync(StackPanel infoPanel, AdbService adb, string deviceId)
+        {
+            // 分辨率
+            string resolution = await adb.RunAdbCommandAsync($"-s {deviceId} shell wm size");
+            // 设备名
+            string model = await adb.RunAdbCommandAsync($"-s {deviceId} shell getprop ro.product.model");
+            // 品牌
+            string brand = await adb.RunAdbCommandAsync($"-s {deviceId} shell getprop ro.product.brand");
+            // Android版本
+            string androidVer = await adb.RunAdbCommandAsync($"-s {deviceId} shell getprop ro.build.version.release");
+            // 序列号
+            string serial = await adb.RunAdbCommandAsync($"-s {deviceId} shell getprop ro.serialno");
+            // IMEI
+            string imei = await adb.RunAdbCommandAsync($"-s {deviceId} shell service call iphonesubinfo 1");
+            // 电量
+            string battery = await adb.RunAdbCommandAsync($"-s {deviceId} shell dumpsys battery | findstr level");
+            // 是否root
+            string root = await adb.RunAdbCommandAsync($"-s {deviceId} shell su -c 'id' 2>&1");
+
+            var card = new Border {
+                BorderThickness = new Thickness(2),
+                BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0, 120, 215)),
+                CornerRadius = new CornerRadius(12),
+                Padding = new Thickness(20),
+                Margin = new Thickness(0,10,0,0),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(30, 0, 120, 215))
+            };
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock { Text = $"分辨率: {resolution.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"设备名: {model.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"品牌: {brand.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"Android版本: {androidVer.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"序列号: {serial.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"IMEI: {imei.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"电量: {battery.Trim()}", FontSize = 16 });
+            stack.Children.Add(new TextBlock { Text = $"Root权限: {(root.Contains("uid=0") ? "是" : "否")}", FontSize = 16 });
+            card.Child = stack;
+            infoPanel.Children.Add(card);
         }
 
         private void ShowFeaturePage()
@@ -125,7 +184,8 @@ namespace App_xddq
             {
                 Title = "提示",
                 Content = message,
-                CloseButtonText = "确定"
+                CloseButtonText = "确定",
+                XamlRoot = this.Content.XamlRoot // 关键修正
             };
             await dialog.ShowAsync();
         }
