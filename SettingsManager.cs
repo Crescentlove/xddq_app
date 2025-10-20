@@ -6,11 +6,9 @@ namespace App_xddq
 {
     public enum LogLevel
     {
-        Critical = 0,
-        Error = 1,
-        Warning = 2,
-        Info = 3,
-        Debug = 4
+        Error = 0,
+        Info = 1,
+        Debug = 2
     }
 
     public class SettingsManager

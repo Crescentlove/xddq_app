@@ -84,6 +84,21 @@ namespace App_xddq
         {
             try
             {
+                // write startup separator to log
+                try
+                {
+                    var settings = new SettingsManager();
+                    var lvl = settings.GetLogLevel();
+                    if (lvl >= LogLevel.Info)
+                    {
+                        string tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp");
+                        if (!Directory.Exists(tmpDir)) Directory.CreateDirectory(tmpDir);
+                        string logPath = Path.Combine(tmpDir, "app.log");
+                        File.AppendAllText(logPath, "\n======= " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " =======\n");
+                    }
+                }
+                catch { }
+
                 string defaultPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
                 string found = null;
                 string content = null;
@@ -104,13 +119,13 @@ namespace App_xddq
                             try
                             {
                                 File.WriteAllText(defaultPath, content, System.Text.Encoding.UTF8);
-                                AppendDebugLog($"Copied configured config.json from {configured} to {defaultPath}");
+                                AppendInfoLog($"Copied configured config.json from {configured} to {defaultPath}");
                                 // set configPath to app copy
                                 _configPath = defaultPath;
                             }
                             catch (Exception ex)
                             {
-                                AppendDebugLog("Failed to copy configured config: " + ex.Message);
+                                AppendInfoLog("Failed to copy configured config: " + ex.Message);
                                 _configPath = configured;
                             }
                         }
@@ -118,7 +133,7 @@ namespace App_xddq
                 }
                 catch { }
 
-                // 2) If not set via settings, search candidate locations
+                // 2) search candidate locations
                 var candidates = new List<string>();
                 var startDirs = new[] { AppDomain.CurrentDomain.BaseDirectory, AppContext.BaseDirectory, Environment.CurrentDirectory };
                 foreach (var start in startDirs)
@@ -161,7 +176,6 @@ namespace App_xddq
 
                 if (string.IsNullOrEmpty(content))
                 {
-                    // pick first candidate and try read with encodings
                     string picked = null;
                     foreach (var c in candidates)
                     {
@@ -170,10 +184,8 @@ namespace App_xddq
                             var (txt, enc) = TryReadWithEncodings(c);
                             if (!string.IsNullOrEmpty(txt))
                             {
-                                // prefer file that contains non-ascii in property names
                                 if (txt.Contains("???"))
                                 {
-                                    // likely garbled; skip if other candidates available
                                     if (picked == null) { picked = c; content = txt; usedEncoding = enc; }
                                     continue;
                                 }
@@ -185,15 +197,13 @@ namespace App_xddq
                     if (content == null && candidates.Count > 0)
                     {
                         picked = candidates[0];
-                        try { content = File.ReadAllText(picked, System.Text.Encoding.UTF8); usedEncoding = System.Text.Encoding.UTF8.WebName; }
-                        catch { }
+                        try { content = File.ReadAllText(picked, System.Text.Encoding.UTF8); usedEncoding = System.Text.Encoding.UTF8.WebName; } catch { }
                     }
                     if (picked != null) found = picked;
                 }
 
                 if (found == null)
                 {
-                    // not found, create sample at defaultPath
                     if (!File.Exists(defaultPath)) CreateSampleConfig();
                     found = defaultPath;
                 }
@@ -204,13 +214,12 @@ namespace App_xddq
                     catch { content = File.ReadAllText(found); usedEncoding = System.Text.Encoding.Default.WebName; }
                 }
 
-                // If we read content from elsewhere, ensure app copy exists
                 try
                 {
                     var dest = defaultPath;
                     if (!string.Equals(found, dest, StringComparison.OrdinalIgnoreCase))
                     {
-                        try { File.WriteAllText(dest, content, System.Text.Encoding.UTF8); AppendDebugLog($"Wrote normalized UTF8 config to {dest} (source encoding: {usedEncoding})"); } catch (Exception ex) { AppendDebugLog("Copy failed: " + ex.Message); }
+                        try { File.WriteAllText(dest, content, System.Text.Encoding.UTF8); AppendInfoLog($"Wrote normalized UTF8 config to {dest} (source encoding: {usedEncoding})"); } catch (Exception ex) { AppendInfoLog("Copy failed: " + ex.Message); }
                         _configPath = dest;
                     }
                     else
@@ -220,7 +229,7 @@ namespace App_xddq
                 }
                 catch { _configPath = found; }
 
-                // parse using content string
+                // parse
                 using var doc = JsonDocument.Parse(content);
                 var root = doc.RootElement;
                 if (root.ValueKind != JsonValueKind.Object) return;
@@ -253,7 +262,7 @@ namespace App_xddq
                 {
                     var settings = new SettingsManager();
                     var level = settings.GetLogLevel();
-                    AppendDebugLog($"Loaded config.json from: {_configPath} (detected encoding: {usedEncoding})");
+                    AppendInfoLog($"Loaded config.json from: {_configPath} (detected encoding: {usedEncoding})");
                     if (level == LogLevel.Debug)
                     {
                         foreach (var sec in _map)
@@ -272,11 +281,11 @@ namespace App_xddq
             }
             catch
             {
-                // ignore parsing errors; leave map as-is
+                // ignore parsing errors
             }
             finally
             {
-                WriteConfigDebugDump(_configPath);
+                try { WriteConfigDebugDump(_configPath); } catch { }
             }
         }
 
@@ -297,7 +306,6 @@ namespace App_xddq
                                     if (item.TryGetInt32(out var n)) vals.Add(n);
                                     else
                                     {
-                                        // try as double and convert
                                         try { var d = item.GetDouble(); vals.Add((int)Math.Round(d)); } catch { }
                                     }
                                 }
@@ -333,7 +341,6 @@ namespace App_xddq
                             }
                             if (x.HasValue && y.HasValue) return ((int)Math.Round(x.Value), (int)Math.Round(y.Value));
 
-                            // try uppercase
                             if (el.TryGetProperty("X", out var pX))
                             {
                                 if (pX.ValueKind == JsonValueKind.Number)
@@ -418,9 +425,7 @@ namespace App_xddq
         private static string NormalizeName(string s)
         {
             if (string.IsNullOrEmpty(s)) return s;
-            // trim and replace fullwidth space with normal space
             var t = s.Trim().Replace('\u3000', ' ');
-            // remove zero-width characters
             t = t.Replace("\u200B", string.Empty).Replace("\uFEFF", string.Empty);
             return t;
         }
@@ -446,8 +451,7 @@ namespace App_xddq
                 var ns = NormalizeName(s);
                 if (string.Equals(ns, nSection, StringComparison.OrdinalIgnoreCase) || ns.IndexOf(nSection, StringComparison.OrdinalIgnoreCase) >= 0 || nSection.IndexOf(ns, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    matchedSection = s;
-                    break;
+                    matchedSection = s; break;
                 }
             }
 
@@ -464,7 +468,6 @@ namespace App_xddq
                     var nk = NormalizeName(k);
                     if (string.Equals(nk, nKey, StringComparison.OrdinalIgnoreCase) || nk.IndexOf(nKey, StringComparison.OrdinalIgnoreCase) >= 0 || nKey.IndexOf(nk, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        // log mapping
                         try { AppendDebugLog($"Fuzzy match: requested Section='{EscapeForLog(section)}' Key='{EscapeForLog(key)}' => matched Section='{EscapeForLog(matchedSection)}' Key='{EscapeForLog(k)}'"); } catch { }
                         return sectionKeys[k];
                     }
@@ -508,10 +511,28 @@ namespace App_xddq
             return null;
         }
 
+        private void AppendInfoLog(string message)
+        {
+            try
+            {
+                var settings = new SettingsManager();
+                var level = settings.GetLogLevel();
+                if (level < LogLevel.Info) return;
+                string tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp");
+                if (!Directory.Exists(tmpDir)) Directory.CreateDirectory(tmpDir);
+                string logPath = Path.Combine(tmpDir, "app.log");
+                File.AppendAllText(logPath, message + Environment.NewLine, System.Text.Encoding.UTF8);
+            }
+            catch { }
+        }
+
         private void AppendDebugLog(string message)
         {
             try
             {
+                var settings = new SettingsManager();
+                var level = settings.GetLogLevel();
+                if (level != LogLevel.Debug) return;
                 string tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp");
                 if (!Directory.Exists(tmpDir)) Directory.CreateDirectory(tmpDir);
                 string logPath = Path.Combine(tmpDir, "app.log");
@@ -543,14 +564,12 @@ namespace App_xddq
                 sw.WriteLine("Config debug dump");
                 sw.WriteLine("Found path: " + configPath);
 
-                // write BOM / first bytes
                 var bytes = File.ReadAllBytes(configPath);
                 sw.WriteLine("File length: " + bytes.Length);
                 sw.WriteLine("First 64 bytes (hex):");
                 for (int i = 0; i < Math.Min(64, bytes.Length); i++) sw.Write(bytes[i].ToString("X2") + " ");
                 sw.WriteLine();
 
-                // write first 400 chars
                 var text = File.ReadAllText(configPath);
                 sw.WriteLine("First 400 chars of file:");
                 sw.WriteLine(text.Substring(0, Math.Min(400, text.Length)));
@@ -639,13 +658,13 @@ namespace App_xddq
                 _map.Clear();
                 Load();
                 message = "Reloaded config.";
-                AppendDebugLog(message);
+                AppendInfoLog(message);
                 return true;
             }
             catch (Exception ex)
             {
                 message = "Reload failed: " + ex.Message;
-                AppendDebugLog(message);
+                AppendInfoLog(message);
                 return false;
             }
         }
