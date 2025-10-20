@@ -6,6 +6,8 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using System.Linq;
+using System.Collections.Generic;
+using Microsoft.UI.Xaml.Media; // for VisualTreeHelper
 
 namespace App_xddq
 {
@@ -20,6 +22,7 @@ namespace App_xddq
 
         // live log textbox reference
         private TextBox _liveLogTextBox;
+        private Panel _toastHostCache = null;
 
         public MainWindow()
         {
@@ -238,11 +241,20 @@ namespace App_xddq
                         var n = (b.Tag as string) ?? name;
                         var funcName = n.EndsWith("功能") ? n : n + "功能";
                         var res = await _taskExecutor.RunFuncAsync(funcName);
-                        await ShowInfoDialog(res);
+                        // only show toast for error/unexpected messages
+                        if (ShouldNotify(res))
+                        {
+                            await ShowToast(TruncateForToast(res));
+                        }
+                        else
+                        {
+                            // do not show completion toast; write to log instead
+                            AppendLocalLog(res);
+                        }
                     }
                     catch (Exception ex)
                     {
-                        await ShowInfoDialog("执行出错: " + ex.Message);
+                        await ShowToast("执行出错: " + ex.Message);
                     }
                     finally { try { b.IsEnabled = true; } catch { } }
                 };
@@ -264,12 +276,19 @@ namespace App_xddq
                 {
                     autoBtn.IsEnabled = false;
                     var selected = itemCheckBoxes.Where(cb => cb.IsChecked == true).Select(cb => cb.Tag as string).Where(n => !string.IsNullOrEmpty(n)).ToList();
-                    if (!selected.Any()) { await ShowInfoDialog("请先勾选要执行的功能。"); return; }
+                    if (!selected.Any()) { await ShowToast("请先勾选要执行的功能。", 1200); return; }
                     var funcNames = selected.Select(n => n.EndsWith("功能") ? n : n + "功能").ToList();
                     var log = await _taskExecutor.RunMultipleFuncsAsync(funcNames);
-                    await ShowInfoDialog(log);
+                    if (ShouldNotify(log))
+                    {
+                        await ShowToast(TruncateForToast(log));
+                    }
+                    else
+                    {
+                        AppendLocalLog(log);
+                    }
                 }
-                catch (Exception ex) { await ShowInfoDialog("执行出错: " + ex.Message); }
+                catch (Exception ex) { await ShowToast("执行出错: " + ex.Message); }
                 finally { autoBtn.IsEnabled = true; }
             };
 
@@ -282,14 +301,139 @@ namespace App_xddq
 
         private async Task ShowInfoDialog(string message)
         {
-            var dialog = new ContentDialog
+            // Replace modal dialog with non-blocking in-app toast for informational messages.
+            try
             {
-                Title = "提示",
-                Content = message,
-                CloseButtonText = "确定",
-                XamlRoot = this.Content.XamlRoot // 关键修正
-            };
-            await dialog.ShowAsync();
+                await ShowToast(message);
+            }
+            catch
+            {
+                // fallback: no-op
+            }
+        }
+
+        private Panel GetToastHost()
+        {
+            try
+            {
+                if (_toastHostCache != null) return _toastHostCache;
+                var root = this.Content as DependencyObject;
+                if (root == null) return null;
+                var found = FindElementByName(root, "ToastHost") as Panel;
+                _toastHostCache = found;
+                return found;
+            }
+            catch { return null; }
+        }
+
+        private DependencyObject FindElementByName(DependencyObject root, string name)
+        {
+            if (root == null) return null;
+            try
+            {
+                if (root is FrameworkElement fe && fe.Name == name) return root;
+            }
+            catch { }
+            int cnt = VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < cnt; i++)
+            {
+                var ch = VisualTreeHelper.GetChild(root, i);
+                var res = FindElementByName(ch, name);
+                if (res != null) return res;
+            }
+            return null;
+        }
+
+        private async Task ShowToast(string message, int durationMs = 1200)
+        {
+            try
+            {
+                // keep UI update on dispatcher
+                this.DispatcherQueue?.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        var toastBorder = new Border
+                        {
+                            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(180, 0, 0, 0)), // more translucent and darker
+                            CornerRadius = new CornerRadius(6),
+                            Padding = new Thickness(8),
+                            Margin = new Thickness(0, 4, 0, 0),
+                            Opacity = 0
+                        };
+
+                        var tb = new TextBlock
+                        {
+                            Text = message,
+                            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(230, 255, 255, 255)),
+                            FontSize = 12, // smaller font
+                            TextWrapping = TextWrapping.Wrap,
+                            MaxWidth = 360
+                        };
+                        toastBorder.Child = tb;
+
+                        try
+                        {
+                            var host = GetToastHost();
+                            if (host != null)
+                            {
+                                // insert at top so newest is less intrusive
+                                host.Children.Insert(0, toastBorder);
+                            }
+                        }
+                        catch { }
+
+                        // show instantly
+                        toastBorder.Opacity = 1;
+
+                        // schedule removal
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await Task.Delay(durationMs);
+                                this.DispatcherQueue?.TryEnqueue(() =>
+                                {
+                                    try
+                                    {
+                                        var host = GetToastHost();
+                                        if (host != null) host.Children.Remove(toastBorder);
+                                    }
+                                    catch { }
+                                });
+                            }
+                            catch { }
+                        });
+                    }
+                    catch { }
+                });
+            }
+            catch { }
+        }
+
+        private static bool ShouldNotify(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message)) return false;
+            var m = message.ToLowerInvariant();
+            // notify on common error-like tokens
+            string[] tokens = new[] { "not found", "unconfigured", "failed", "error", "canceled", "already running", "cannot", "not found:" , "failed:" };
+            foreach (var t in tokens) if (m.Contains(t)) return true;
+            // if message looks like a long execution log that ends with "Completed", do not notify
+            if (m.Contains("completed") && m.Length > 20 && !m.Contains("unconfigured") ) return false;
+            // if message is short and informative, show it
+            if (message.Length < 120) return true;
+            // otherwise default to not notifying
+            return false;
+        }
+
+        private static string TruncateForToast(string message, int max = 240)
+        {
+            if (string.IsNullOrEmpty(message)) return message;
+            if (message.Length <= max) return message;
+            // keep first line or first max chars
+            var firstLineEnd = message.IndexOf('\n');
+            if (firstLineEnd > 0 && firstLineEnd < 200) return message.Substring(0, firstLineEnd) + "...";
+            return message.Substring(0, max) + "...";
         }
 
         private void ShowConfigPage()
@@ -448,9 +592,9 @@ namespace App_xddq
 
                         try
                         {
-                            var tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tmp");
+                            var tmpDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tmp");
                             Directory.CreateDirectory(tmpDir);
-                            var localPath = Path.Combine(tmpDir, $"screenshot_{Guid.NewGuid()}.png");
+                            var localPath = System.IO.Path.Combine(tmpDir, $"screenshot_{Guid.NewGuid()}.png");
 
                             // take screenshot on device and pull
                             await _adbService.RunAdbCommandAsync($"-s {deviceId} shell screencap -p /sdcard/tmp_screenshot.png");
@@ -595,7 +739,7 @@ namespace App_xddq
                     {
                         if (File.Exists(logPath)) File.WriteAllText(logPath, string.Empty);
                         if (_liveLogTextBox != null) _liveLogTextBox.Text = string.Empty;
-                        await ShowInfoDialog("日志已清除。");
+                        await ShowToast("日志已清除。");
                     }
                     catch (Exception ex)
                     {
@@ -675,7 +819,6 @@ namespace App_xddq
             panel.Children.Add(funcPathBox);
 
             var funcBtnBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
-
             var chooseFuncBtn = new Button { Content = "选择 func_steps.json 文件", Margin = new Thickness(0, 0, 8, 0) };
             chooseFuncBtn.Click += async (s, e) =>
             {
@@ -705,13 +848,9 @@ namespace App_xddq
                 try
                 {
                     if (_taskExecutor.ReloadFuncSteps(out var msg))
-                    {
                         await ShowInfoDialog("重新加载成功: " + msg);
-                    }
                     else
-                    {
                         await ShowInfoDialog("重新加载失败: " + msg);
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -750,7 +889,6 @@ namespace App_xddq
                 }
             };
             funcBtnBar.Children.Add(copyFuncBtn);
-
             panel.Children.Add(funcBtnBar);
 
             // Spacer
@@ -762,7 +900,6 @@ namespace App_xddq
             panel.Children.Add(configPathBox);
 
             var configBtnBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
-
             var chooseConfigBtn = new Button { Content = "选择 config.json 文件", Margin = new Thickness(0, 0, 8, 0) };
             chooseConfigBtn.Click += async (s, e) =>
             {
@@ -842,6 +979,43 @@ namespace App_xddq
 
             panel.Children.Add(configBtnBar);
 
+            // Log level setting
+            panel.Children.Add(new TextBlock { Text = "", Height = 12 });
+            panel.Children.Add(new TextBlock { Text = "日志等级：", FontSize = 16 });
+            var logLevelComboBox = new ComboBox { Width = 220 };
+            foreach (var name in Enum.GetNames(typeof(LogLevel)))
+            {
+                logLevelComboBox.Items.Add(new ComboBoxItem { Content = name });
+            }
+            try
+            {
+                var current = _settingsManager.GetLogLevel();
+                for (int i = 0; i < logLevelComboBox.Items.Count; i++)
+                {
+                    if (logLevelComboBox.Items[i] is ComboBoxItem item && string.Equals(item.Content as string, current.ToString(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        logLevelComboBox.SelectedIndex = i;
+                        break;
+                    }
+                }
+            }
+            catch { }
+            panel.Children.Add(logLevelComboBox);
+
+            logLevelComboBox.SelectionChanged += async (s, e) =>
+            {
+                try
+                {
+                    var sel = (logLevelComboBox.SelectedItem as ComboBoxItem)?.Content as string;
+                    if (!string.IsNullOrEmpty(sel) && Enum.TryParse<LogLevel>(sel, out var lvl))
+                    {
+                        _settingsManager.SetLogLevel(lvl);
+                        await ShowToast($"已设置日志等级: {lvl}");
+                    }
+                }
+                catch { }
+            };
+
             MainFrame.Content = panel;
         }
 
@@ -865,6 +1039,35 @@ namespace App_xddq
             }
             catch { }
             return "README文件未找到。";
+        }
+
+        private void AppendLocalLog(string text)
+        {
+            try
+            {
+                string tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp");
+                if (!Directory.Exists(tmpDir)) Directory.CreateDirectory(tmpDir);
+                string logPath = Path.Combine(tmpDir, "app.log");
+                File.AppendAllText(logPath, text + Environment.NewLine);
+            }
+            catch { }
+
+            try
+            {
+                this.DispatcherQueue?.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        if (_liveLogTextBox != null)
+                        {
+                            _liveLogTextBox.Text += text + "\n";
+                            try { _liveLogTextBox.SelectionStart = _liveLogTextBox.Text.Length; _liveLogTextBox.SelectionLength = 0; } catch { }
+                        }
+                    }
+                    catch { }
+                });
+            }
+            catch { }
         }
     }
 }

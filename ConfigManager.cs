@@ -251,15 +251,20 @@ namespace App_xddq
                 // Detailed logging of loaded config for debugging
                 try
                 {
+                    var settings = new SettingsManager();
+                    var level = settings.GetLogLevel();
                     AppendDebugLog($"Loaded config.json from: {_configPath} (detected encoding: {usedEncoding})");
-                    foreach (var sec in _map)
+                    if (level == LogLevel.Debug)
                     {
-                        AppendDebugLog($"Section: [{EscapeForLog(sec.Key)}] KeysCount: {sec.Value.Count}");
-                        int i = 0;
-                        foreach (var k in sec.Value.Keys)
+                        foreach (var sec in _map)
                         {
-                            i++; if (i > 20) { AppendDebugLog("  ... more keys ..."); break; }
-                            AppendDebugLog($"  Key[{i}]: [{EscapeForLog(k)}]");
+                            AppendDebugLog($"Section: [{EscapeForLog(sec.Key)}] KeysCount: {sec.Value.Count}");
+                            int i = 0;
+                            foreach (var k in sec.Value.Keys)
+                            {
+                                i++; if (i > 20) { AppendDebugLog("  ... more keys ..."); break; }
+                                AppendDebugLog($"  Key[{i}]: [{EscapeForLog(k)}]");
+                            }
                         }
                     }
                 }

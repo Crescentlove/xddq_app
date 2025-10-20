@@ -4,6 +4,15 @@ using System.Text.Json;
 
 namespace App_xddq
 {
+    public enum LogLevel
+    {
+        Critical = 0,
+        Error = 1,
+        Warning = 2,
+        Info = 3,
+        Debug = 4
+    }
+
     public class SettingsManager
     {
         private readonly string _path;
@@ -14,6 +23,7 @@ namespace App_xddq
             public string ExportPath { get; set; }
             public string FuncStepsPath { get; set; }
             public string ConfigPath { get; set; }
+            public LogLevel? LogLevel { get; set; }
         }
 
         public SettingsManager()
@@ -28,16 +38,16 @@ namespace App_xddq
             {
                 if (!File.Exists(_path))
                 {
-                    _data = new SettingsData();
+                    _data = new SettingsData { LogLevel = App_xddq.LogLevel.Info };
                     Save();
                     return;
                 }
                 var json = File.ReadAllText(_path);
-                _data = JsonSerializer.Deserialize<SettingsData>(json) ?? new SettingsData();
+                _data = JsonSerializer.Deserialize<SettingsData>(json) ?? new SettingsData { LogLevel = App_xddq.LogLevel.Info };
             }
             catch
             {
-                _data = new SettingsData();
+                _data = new SettingsData { LogLevel = App_xddq.LogLevel.Info };
             }
         }
 
@@ -92,6 +102,23 @@ namespace App_xddq
         {
             if (_data == null) _data = new SettingsData();
             _data.ConfigPath = path;
+            Save();
+        }
+
+        public LogLevel GetLogLevel()
+        {
+            try
+            {
+                if (_data?.LogLevel != null) return _data.LogLevel.Value;
+            }
+            catch { }
+            return LogLevel.Info;
+        }
+
+        public void SetLogLevel(LogLevel level)
+        {
+            if (_data == null) _data = new SettingsData();
+            _data.LogLevel = level;
             Save();
         }
     }
