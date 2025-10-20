@@ -153,16 +153,52 @@ namespace App_xddq
                 }
 
                 var json = File.ReadAllText(foundPath);
-                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var root = JsonSerializer.Deserialize<Dictionary<string, List<TaskStep>>>(json, options);
-                if (root != null)
+
+                // Manual parsing to avoid reflection-based deserialization (source-gen / trimming issues)
+                try
                 {
-                    foreach (var kv in root)
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    if (root.ValueKind == JsonValueKind.Object)
                     {
-                        var key = (kv.Key ?? string.Empty).Trim();
-                        if (string.IsNullOrEmpty(key)) continue;
-                        dict[key] = kv.Value ?? new List<TaskStep>();
+                        foreach (var funcProp in root.EnumerateObject())
+                        {
+                            var funcName = (funcProp.Name ?? string.Empty).Trim();
+                            if (string.IsNullOrEmpty(funcName)) continue;
+                            var steps = new List<TaskStep>();
+                            var arr = funcProp.Value;
+                            if (arr.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var item in arr.EnumerateArray())
+                                {
+                                    try
+                                    {
+                                        string section = null, key = null;
+                                        double sleep = 0;
+                                        if (item.ValueKind == JsonValueKind.Object)
+                                        {
+                                            if (item.TryGetProperty("section", out var ps) && ps.ValueKind == JsonValueKind.String) section = ps.GetString();
+                                            if (item.TryGetProperty("key", out var pk) && pk.ValueKind == JsonValueKind.String) key = pk.GetString();
+                                            if (item.TryGetProperty("sleep", out var psl))
+                                            {
+                                                if (psl.ValueKind == JsonValueKind.Number) sleep = psl.GetDouble();
+                                                else if (psl.ValueKind == JsonValueKind.String && double.TryParse(psl.GetString(), out var d)) sleep = d;
+                                            }
+                                        }
+                                        if (string.IsNullOrEmpty(section) || string.IsNullOrEmpty(key)) continue;
+                                        steps.Add(new TaskStep { Section = section.Trim(), Key = key.Trim(), Sleep = sleep });
+                                    }
+                                    catch { }
+                                }
+                            }
+                            if (steps.Count > 0)
+                                dict[funcName] = steps;
+                        }
                     }
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("Error parsing func_steps.json: " + ex.Message);
                 }
             }
             catch (Exception ex)

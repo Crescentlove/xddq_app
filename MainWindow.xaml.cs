@@ -209,31 +209,33 @@ namespace App_xddq
 
             // header with select-all and auto execute
             var header = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            var selectAll = new CheckBox { Content = "", VerticalAlignment = VerticalAlignment.Center };
+            var selectAll = new CheckBox { Content = "全选", VerticalAlignment = VerticalAlignment.Center };
             header.Children.Add(selectAll);
-            header.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 16, Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            header.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 16, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var autoBtn = new Button { Content = "自动执行", Margin = new Thickness(20, 0, 0, 0) };
             header.Children.Add(autoBtn);
             stack.Children.Add(header);
 
-            // panel to hold items vertically
-            var listPanel = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 8, 0, 0) };
+            // horizontal scrollable area for function items (checkbox + button)
+            var scroll = new ScrollViewer { HorizontalScrollMode = ScrollMode.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new Thickness(0, 8, 0, 0) };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
 
-            // build item rows
+            // keep references to checkboxes for select-all wiring
+            var itemCheckBoxes = new System.Collections.Generic.List<CheckBox>();
+
             foreach (var name in items)
             {
-                var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-                var cb = new CheckBox { VerticalAlignment = VerticalAlignment.Center, Tag = name };
-                var lbl = new TextBlock { Text = name, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
-                var runBtn = new Button { Content = "执行", Tag = name, Margin = new Thickness(8, 0, 0, 0) };
+                var itemStack = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(6, 0, 6, 0), Width = 120 };
+                var cb = new CheckBox { HorizontalAlignment = HorizontalAlignment.Center, Tag = name };
+                var btn = new Button { Content = name, Margin = new Thickness(0, 6, 0, 0), Height = 36, Tag = name };
 
-                runBtn.Click += async (s, e) =>
+                btn.Click += async (s, e) =>
                 {
-                    var btn = s as Button; if (btn == null) return;
+                    var b = s as Button; if (b == null) return;
                     try
                     {
-                        btn.IsEnabled = false;
-                        var n = (btn.Tag as string) ?? name;
+                        b.IsEnabled = false;
+                        var n = (b.Tag as string) ?? name;
                         var funcName = n.EndsWith("功能") ? n : n + "功能";
                         var res = await _taskExecutor.RunFuncAsync(funcName);
                         await ShowInfoDialog(res);
@@ -242,18 +244,18 @@ namespace App_xddq
                     {
                         await ShowInfoDialog("执行出错: " + ex.Message);
                     }
-                    finally { try { btn.IsEnabled = true; } catch { } }
+                    finally { try { b.IsEnabled = true; } catch { } }
                 };
 
-                row.Children.Add(cb);
-                row.Children.Add(lbl);
-                row.Children.Add(runBtn);
-                listPanel.Children.Add(row);
+                itemStack.Children.Add(cb);
+                itemStack.Children.Add(btn);
+                panel.Children.Add(itemStack);
+                itemCheckBoxes.Add(cb);
             }
 
             // wire selectAll to checkboxes
-            selectAll.Checked += (s, e) => { foreach (var p in listPanel.Children.OfType<StackPanel>()) foreach (var c in p.Children.OfType<CheckBox>()) c.IsChecked = true; };
-            selectAll.Unchecked += (s, e) => { foreach (var p in listPanel.Children.OfType<StackPanel>()) foreach (var c in p.Children.OfType<CheckBox>()) c.IsChecked = false; };
+            selectAll.Checked += (s, e) => { foreach (var c in itemCheckBoxes) c.IsChecked = true; };
+            selectAll.Unchecked += (s, e) => { foreach (var c in itemCheckBoxes) c.IsChecked = false; };
 
             // auto execute uses checked items
             autoBtn.Click += async (s, e) =>
@@ -261,7 +263,7 @@ namespace App_xddq
                 try
                 {
                     autoBtn.IsEnabled = false;
-                    var selected = listPanel.Children.OfType<StackPanel>().SelectMany(p => p.Children.OfType<CheckBox>()).Where(cb => cb.IsChecked == true).Select(cb => cb.Tag as string).Where(n => !string.IsNullOrEmpty(n)).ToList();
+                    var selected = itemCheckBoxes.Where(cb => cb.IsChecked == true).Select(cb => cb.Tag as string).Where(n => !string.IsNullOrEmpty(n)).ToList();
                     if (!selected.Any()) { await ShowInfoDialog("请先勾选要执行的功能。"); return; }
                     var funcNames = selected.Select(n => n.EndsWith("功能") ? n : n + "功能").ToList();
                     var log = await _taskExecutor.RunMultipleFuncsAsync(funcNames);
@@ -271,7 +273,9 @@ namespace App_xddq
                 finally { autoBtn.IsEnabled = true; }
             };
 
-            stack.Children.Add(listPanel);
+            scroll.Content = panel;
+            stack.Children.Add(scroll);
+
             border.Child = stack;
             return border;
         }
