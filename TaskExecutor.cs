@@ -25,6 +25,9 @@ namespace App_xddq
         private readonly IConfigManager _configManager;
         private readonly Dictionary<string, List<TaskStep>> _funcSteps;
 
+        // Real-time log event
+        public event Action<string> LogUpdated;
+
         public TaskExecutor(AdbService adbService, IConfigManager configManager)
         {
             _adbService = adbService;
@@ -44,26 +47,54 @@ namespace App_xddq
             return dict;
         }
 
+        private void AppendLog(string line)
+        {
+            try
+            {
+                string tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp");
+                if (!Directory.Exists(tmpDir)) Directory.CreateDirectory(tmpDir);
+                string logPath = Path.Combine(tmpDir, "app.log");
+                File.AppendAllText(logPath, line + Environment.NewLine);
+            }
+            catch { }
+
+            try
+            {
+                LogUpdated?.Invoke(line);
+            }
+            catch { }
+        }
+
         public async Task<string> RunFuncAsync(string funcName)
         {
             if (!_funcSteps.ContainsKey(funcName))
-                return $"???????: {funcName}";
+            {
+                var msg = $"?????: {funcName}";
+                AppendLog(msg);
+                return msg;
+            }
             var steps = _funcSteps[funcName];
             string log = "";
+            AppendLog($"????: {funcName}");
             foreach (var step in steps)
             {
-                log += $"??: [{step.Section}] {step.Key}\n";
+                var line = $"??: [{step.Section}] {step.Key}";
+                log += line + "\n";
+                AppendLog(line);
                 var pos = _configManager.GetPosition(step.Section, step.Key);
                 if (pos == null)
                 {
-                    log += $"????????????: {step.Section} - {step.Key}\n";
+                    var miss = $"?????: {step.Section} - {step.Key}";
+                    AppendLog(miss);
+                    log += miss + "\n";
                     continue;
                 }
-                // ????
+                // ?? adb tap
                 await _adbService.RunAdbCommandAsync($"shell input tap {pos.Value.x} {pos.Value.y}");
                 await Task.Delay(TimeSpan.FromSeconds(step.Sleep));
             }
-            return log + "??????";
+            AppendLog($"??: {funcName}");
+            return log + "??";
         }
 
         public async Task<string> RunMultipleFuncsAsync(IEnumerable<string> funcNames)
@@ -71,7 +102,8 @@ namespace App_xddq
             string log = "";
             foreach (var name in funcNames)
             {
-                log += await RunFuncAsync(name) + "\n";
+                var res = await RunFuncAsync(name);
+                log += res + "\n";
             }
             return log;
         }

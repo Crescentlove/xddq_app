@@ -17,6 +17,9 @@ namespace App_xddq
         private readonly ConfigManager _configManager;
         private readonly TaskExecutor _taskExecutor;
 
+        // live log textbox reference
+        private TextBox _liveLogTextBox;
+
         public MainWindow()
         {
             this.InitializeComponent();
@@ -25,7 +28,30 @@ namespace App_xddq
             _configManager = new ConfigManager();
             _taskExecutor = new TaskExecutor(_adbService, _configManager);
 
+            // subscribe to realtime logs
+            _taskExecutor.LogUpdated += OnLogUpdated;
+
             ShowHomePage();
+        }
+
+        private void OnLogUpdated(string line)
+        {
+            try
+            {
+                // update UI thread
+                this.DispatcherQueue?.TryEnqueue(() =>
+                {
+                    if (_liveLogTextBox == null) return;
+                    _liveLogTextBox.Text += line + "\n";
+                    try
+                    {
+                        _liveLogTextBox.SelectionStart = _liveLogTextBox.Text.Length;
+                        _liveLogTextBox.SelectionLength = 0;
+                    }
+                    catch { }
+                });
+            }
+            catch { }
         }
 
         private void HamburgerButton_Click(object sender, RoutedEventArgs e)
@@ -377,6 +403,111 @@ namespace App_xddq
                     row.Children.Add(updateBtn);
                     row.Children.Add(removeBtn);
                     secStack.Children.Add(row);
+
+                    var pickBtn = new Button { Content = "拾取", Margin = new Thickness(8, 0, 0, 0) };
+
+                    pickBtn.Click += async (s, e) =>
+                    {
+                        // get first connected device id
+                        string devices = await _adbService.GetDevicesAsync();
+                        var linesDev = devices.Split('\n');
+                        string deviceId = null;
+                        foreach (var ln in linesDev)
+                        {
+                            if (ln.Contains("\tdevice"))
+                            {
+                                deviceId = ln.Split('\t')[0].Trim();
+                                break;
+                            }
+                        }
+                        if (string.IsNullOrEmpty(deviceId))
+                        {
+                            await ShowInfoDialog("未检测到设备，无法截图。");
+                            return;
+                        }
+
+                        try
+                        {
+                            var tmpDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tmp");
+                            Directory.CreateDirectory(tmpDir);
+                            var localPath = Path.Combine(tmpDir, $"screenshot_{Guid.NewGuid()}.png");
+
+                            // take screenshot on device and pull
+                            await _adbService.RunAdbCommandAsync($"-s {deviceId} shell screencap -p /sdcard/tmp_screenshot.png");
+                            await _adbService.RunAdbCommandAsync($"-s {deviceId} pull /sdcard/tmp_screenshot.png \"{localPath}\"");
+                            await _adbService.RunAdbCommandAsync($"-s {deviceId} shell rm /sdcard/tmp_screenshot.png");
+
+                            if (!File.Exists(localPath))
+                            {
+                                await ShowInfoDialog("截图获取失败。");
+                                return;
+                            }
+
+                            var dlg = new ContentDialog { Title = "点击图片以拾取坐标", CloseButtonText = "取消", XamlRoot = this.Content.XamlRoot };
+                            var img = new Image { Stretch = Stretch.Uniform, MaxHeight = 600, MaxWidth = 800 };
+
+                            var bmp = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri($"file:///{localPath.Replace('\\','/')}"));
+                            img.Source = bmp;
+
+                            double imgPixelW = 0, imgPixelH = 0;
+                            img.ImageOpened += (snd, ev) =>
+                            {
+                                try
+                                {
+                                    imgPixelW = bmp.PixelWidth;
+                                    imgPixelH = bmp.PixelHeight;
+                                }
+                                catch { }
+                            };
+
+                            img.PointerPressed += (snd, ev) =>
+                            {
+                                try
+                                {
+                                    var pt = ev.GetCurrentPoint(img).Position;
+                                    double controlW = img.ActualWidth;
+                                    double controlH = img.ActualHeight;
+                                    if (imgPixelW <= 0 || imgPixelH <= 0 || controlW <= 0 || controlH <= 0)
+                                    {
+                                        return;
+                                    }
+
+                                    var ratio = Math.Min(controlW / imgPixelW, controlH / imgPixelH);
+                                    var displayedW = imgPixelW * ratio;
+                                    var displayedH = imgPixelH * ratio;
+                                    var offsetX = (controlW - displayedW) / 2.0;
+                                    var offsetY = (controlH - displayedH) / 2.0;
+
+                                    if (pt.X < offsetX || pt.X > offsetX + displayedW || pt.Y < offsetY || pt.Y > offsetY + displayedH)
+                                    {
+                                        // clicked outside image area
+                                        return;
+                                    }
+
+                                    var rx = (pt.X - offsetX) / ratio;
+                                    var ry = (pt.Y - offsetY) / ratio;
+
+                                    xBox.Text = ((int)Math.Round(rx)).ToString();
+                                    yBox.Text = ((int)Math.Round(ry)).ToString();
+
+                                    // close dialog
+                                    dlg.Hide();
+                                }
+                                catch { }
+                            };
+
+                            dlg.Content = new ScrollViewer { Content = img, HorizontalScrollMode = ScrollMode.Auto, VerticalScrollMode = ScrollMode.Auto };
+                            await dlg.ShowAsync();
+
+                            try { File.Delete(localPath); } catch { }
+                        }
+                        catch (Exception ex)
+                        {
+                            await ShowInfoDialog("截图失败: " + ex.Message);
+                        }
+                    };
+
+                    row.Children.Add(pickBtn);
                 }
 
                 border.Child = secStack;
@@ -393,6 +524,7 @@ namespace App_xddq
             panel.Children.Add(new TextBlock { Text = "日志区", FontSize = 24, Margin = new Thickness(0,0,0,20) });
             var logText = new TextBox { FontSize = 14, TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, IsReadOnly = true, Height = 400 };
             logText.Text = LoadLog();
+            _liveLogTextBox = logText; // save reference for live updates
             panel.Children.Add(logText);
             MainFrame.Content = panel;
         }
