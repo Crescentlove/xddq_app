@@ -5,15 +5,26 @@ using Microsoft.UI.Text;
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using System.Linq;
 
 namespace App_xddq
 {
     public sealed partial class MainWindow : Window
     {
         private bool _sidebarExpanded = false;
+        // Add shared services
+        private readonly AdbService _adbService;
+        private readonly ConfigManager _configManager;
+        private readonly TaskExecutor _taskExecutor;
+
         public MainWindow()
         {
             this.InitializeComponent();
+            // Initialize shared services
+            _adbService = new AdbService();
+            _configManager = new ConfigManager();
+            _taskExecutor = new TaskExecutor(_adbService, _configManager);
+
             ShowHomePage();
         }
 
@@ -68,8 +79,8 @@ namespace App_xddq
         {
             infoPanel.Children.Clear();
             infoPanel.Children.Add(new TextBlock { Text = "首页", FontSize = 24, Margin = new Thickness(0,0,0,20) });
-            var adb = new AdbService();
-            string devices = await adb.GetDevicesAsync();
+            // use shared adb service
+            string devices = await _adbService.GetDevicesAsync();
             var lines = devices.Split('\n');
             string deviceId = null;
             foreach (var line in lines)
@@ -87,7 +98,7 @@ namespace App_xddq
             }
             infoPanel.Children.Add(new TextBlock { Text = $"已连接设备: {deviceId}", FontSize = 16, Margin = new Thickness(0,10,0,0) });
             // 查询所有可用信息
-            await AddDeviceInfoAsync(infoPanel, adb, deviceId);
+            await AddDeviceInfoAsync(infoPanel, _adbService, deviceId);
         }
 
         private async Task AddDeviceInfoAsync(StackPanel infoPanel, AdbService adb, String deviceId)
@@ -160,19 +171,64 @@ namespace App_xddq
         {
             var border = new Border { BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 221, 221, 221)), CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(10) };
             var stack = new StackPanel();
+            // create itemsPanel early so header handlers can access it
+            var itemsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+
             var header = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             var selectAll = new CheckBox { Content = "", VerticalAlignment = VerticalAlignment.Center };
-            selectAll.Checked += (s, e) => { foreach (var cb in stack.Children) if (cb is CheckBox box) box.IsChecked = true; };
-            selectAll.Unchecked += (s, e) => { foreach (var cb in stack.Children) if (cb is CheckBox box) box.IsChecked = false; };
+            // properly toggle checkboxes in itemsPanel
+            selectAll.Checked += (s, e) => { foreach (var cb in itemsPanel.Children.OfType<CheckBox>()) cb.IsChecked = true; };
+            selectAll.Unchecked += (s, e) => { foreach (var cb in itemsPanel.Children.OfType<CheckBox>()) cb.IsChecked = false; };
             header.Children.Add(selectAll);
             header.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 16, Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var autoBtn = new Button { Content = "自动执行", Margin = new Thickness(20, 0, 0, 0) };
-            autoBtn.Click += async (s, e) => { await ShowInfoDialog(title + "自动执行（未实现）"); };
+            // wire auto execute to TaskExecutor
+            autoBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    autoBtn.IsEnabled = false;
+                    // collect selected items from itemsPanel
+                    if (itemsPanel == null)
+                    {
+                        await ShowInfoDialog("未找到项目列表。");
+                        return;
+                    }
+
+                    var selected = itemsPanel.Children.OfType<CheckBox>().Where(cb => cb.IsChecked == true).Select(cb => cb.Tag as string ?? cb.Content?.ToString()).Where(n => !string.IsNullOrEmpty(n)).ToList();
+                    if (!selected.Any())
+                    {
+                        await ShowInfoDialog("请先勾选要执行的功能。");
+                        return;
+                    }
+
+                    // map UI name to funcSteps key: append '功能' if not present
+                    var funcNames = selected.Select(n => n.EndsWith("功能") ? n : n + "功能").ToList();
+
+                    // run sequentially
+                    var log = await _taskExecutor.RunMultipleFuncsAsync(funcNames);
+                    await ShowInfoDialog(log);
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("执行出错: " + ex.Message);
+                }
+                finally
+                {
+                    autoBtn.IsEnabled = true;
+                }
+            };
+
             header.Children.Add(autoBtn);
             stack.Children.Add(header);
-            var itemsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
+
             foreach (var name in items)
-                itemsPanel.Children.Add(new CheckBox { Content = name });
+            {
+                var cb = new CheckBox { Content = name };
+                // store the actual func key in Tag for future flexibility
+                cb.Tag = name;
+                itemsPanel.Children.Add(cb);
+            }
             stack.Children.Add(itemsPanel);
             border.Child = stack;
             return border;
@@ -190,7 +246,146 @@ namespace App_xddq
             await dialog.ShowAsync();
         }
 
-        private void ShowConfigPage() => MainFrame.Content = new TextBlock { Text = "配置区（上传截图与坐标分析）", FontSize = 24, Margin = new Thickness(40) };
+        private void ShowConfigPage()
+        {
+            var scroll = new ScrollViewer { Margin = new Thickness(20) };
+            var panel = new StackPanel { Spacing = 10 };
+
+            var header = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            header.Children.Add(new TextBlock { Text = "配置区（上传截图与坐标分析）", FontSize = 24, Margin = new Thickness(0, 0, 20, 0) });
+            var saveAllBtn = new Button { Content = "保存配置", Margin = new Thickness(0, 0, 10, 0) };
+            saveAllBtn.Click += async (s, e) =>
+            {
+                var ok = _configManager.Save();
+                await ShowInfoDialog(ok ? "保存成功" : "保存失败");
+            };
+            header.Children.Add(saveAllBtn);
+
+            var addSectionBtn = new Button { Content = "添加分区" };
+            addSectionBtn.Click += async (s, e) =>
+            {
+                var dlg = new ContentDialog { Title = "添加分区", PrimaryButtonText = "确定", CloseButtonText = "取消", XamlRoot = this.Content.XamlRoot };
+                var box = new TextBox { PlaceholderText = "分区名称" };
+                dlg.Content = box;
+                var res = await dlg.ShowAsync();
+                if (res == ContentDialogResult.Primary)
+                {
+                    var name = box.Text?.Trim();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        // ensure section exists by adding a dummy key then removing it
+                        _configManager.AddOrUpdatePosition(name, "_placeholder", 0, 0);
+                        _configManager.RemovePosition(name, "_placeholder");
+                        ShowConfigPage();
+                    }
+                }
+            };
+            header.Children.Add(addSectionBtn);
+
+            panel.Children.Add(header);
+
+            var all = _configManager.GetAll();
+            foreach (var sec in all)
+            {
+                var border = new Border { BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 200, 200, 200)), CornerRadius = new CornerRadius(6), Padding = new Thickness(10) };
+                var secStack = new StackPanel();
+
+                var secHeader = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                secHeader.Children.Add(new TextBlock { Text = sec.Key, FontSize = 18, FontWeight = FontWeights.Bold });
+                var addKeyBtn = new Button { Content = "添加键", Margin = new Thickness(10, 0, 0, 0) };
+                addKeyBtn.Click += async (s, e) =>
+                {
+                    var dlg = new ContentDialog { Title = $"在 {sec.Key} 添加键", PrimaryButtonText = "确定", CloseButtonText = "取消", XamlRoot = this.Content.XamlRoot };
+                    var stackInput = new StackPanel();
+                    var keyBox = new TextBox { PlaceholderText = "键名" };
+                    var xBox = new TextBox { PlaceholderText = "x" };
+                    var yBox = new TextBox { PlaceholderText = "y" };
+                    stackInput.Children.Add(keyBox);
+                    stackInput.Children.Add(xBox);
+                    stackInput.Children.Add(yBox);
+                    dlg.Content = stackInput;
+                    var res = await dlg.ShowAsync();
+                    if (res == ContentDialogResult.Primary)
+                    {
+                        if (string.IsNullOrWhiteSpace(keyBox.Text) || !int.TryParse(xBox.Text, out var xi) || !int.TryParse(yBox.Text, out var yi))
+                        {
+                            await ShowInfoDialog("请输入有效的键名和坐标（整数）。");
+                        }
+                        else
+                        {
+                            _configManager.AddOrUpdatePosition(sec.Key, keyBox.Text.Trim(), xi, yi);
+                            ShowConfigPage();
+                        }
+                    }
+                };
+                secHeader.Children.Add(addKeyBtn);
+
+                var removeSecBtn = new Button { Content = "删除分区", Margin = new Thickness(10, 0, 0, 0) };
+                removeSecBtn.Click += async (s, e) =>
+                {
+                    var dlg = new ContentDialog { Title = $"确认删除分区 {sec.Key}？", PrimaryButtonText = "删除", CloseButtonText = "取消", XamlRoot = this.Content.XamlRoot };
+                    var res = await dlg.ShowAsync();
+                    if (res == ContentDialogResult.Primary)
+                    {
+                        // remove all keys under section
+                        var keys = sec.Value.Keys.ToList();
+                        foreach (var k in keys) _configManager.RemovePosition(sec.Key, k);
+                        ShowConfigPage();
+                    }
+                };
+                secHeader.Children.Add(removeSecBtn);
+
+                secStack.Children.Add(secHeader);
+
+                foreach (var key in sec.Value)
+                {
+                    var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                    row.Children.Add(new TextBlock { Text = key.Key, Width = 180, VerticalAlignment = VerticalAlignment.Center });
+                    var xBox = new TextBox { Width = 80, Text = key.Value.x.ToString(), Margin = new Thickness(8, 0, 0, 0) };
+                    var yBox = new TextBox { Width = 80, Text = key.Value.y.ToString(), Margin = new Thickness(8, 0, 0, 0) };
+                    var updateBtn = new Button { Content = "更新", Margin = new Thickness(8, 0, 0, 0) };
+                    var removeBtn = new Button { Content = "删除", Margin = new Thickness(8, 0, 0, 0) };
+
+                    updateBtn.Click += async (s, e) =>
+                    {
+                        if (!int.TryParse(xBox.Text, out var nx) || !int.TryParse(yBox.Text, out var ny))
+                        {
+                            await ShowInfoDialog("坐标必须为整数。");
+                            return;
+                        }
+                        _configManager.AddOrUpdatePosition(sec.Key, key.Key, nx, ny);
+                        var ok = _configManager.Save();
+                        await ShowInfoDialog(ok ? "更新并保存成功" : "更新成功但保存失败");
+                        ShowConfigPage();
+                    };
+
+                    removeBtn.Click += async (s, e) =>
+                    {
+                        var dlg = new ContentDialog { Title = $"确认删除 {key.Key}？", PrimaryButtonText = "删除", CloseButtonText = "取消", XamlRoot = this.Content.XamlRoot };
+                        var res = await dlg.ShowAsync();
+                        if (res == ContentDialogResult.Primary)
+                        {
+                            _configManager.RemovePosition(sec.Key, key.Key);
+                            var ok = _configManager.Save();
+                            await ShowInfoDialog(ok ? "删除并保存成功" : "删除成功但保存失败");
+                            ShowConfigPage();
+                        }
+                    };
+
+                    row.Children.Add(xBox);
+                    row.Children.Add(yBox);
+                    row.Children.Add(updateBtn);
+                    row.Children.Add(removeBtn);
+                    secStack.Children.Add(row);
+                }
+
+                border.Child = secStack;
+                panel.Children.Add(border);
+            }
+
+            scroll.Content = panel;
+            MainFrame.Content = scroll;
+        }
 
         private void ShowLogPage()
         {
