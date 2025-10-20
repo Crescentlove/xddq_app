@@ -12,6 +12,8 @@ namespace App_xddq
         private class SettingsData
         {
             public string ExportPath { get; set; }
+            public string FuncStepsPath { get; set; }
+            public string ConfigPath { get; set; }
         }
 
         public SettingsManager()
@@ -64,6 +66,32 @@ namespace App_xddq
         {
             if (_data == null) _data = new SettingsData();
             _data.ExportPath = path;
+            Save();
+        }
+
+        public string GetFuncStepsPath()
+        {
+            if (!string.IsNullOrWhiteSpace(_data?.FuncStepsPath)) return _data.FuncStepsPath;
+            return null;
+        }
+
+        public void SetFuncStepsPath(string path)
+        {
+            if (_data == null) _data = new SettingsData();
+            _data.FuncStepsPath = path;
+            Save();
+        }
+
+        public string GetConfigPath()
+        {
+            if (!string.IsNullOrWhiteSpace(_data?.ConfigPath)) return _data.ConfigPath;
+            return null;
+        }
+
+        public void SetConfigPath(string path)
+        {
+            if (_data == null) _data = new SettingsData();
+            _data.ConfigPath = path;
             Save();
         }
     }

@@ -206,65 +206,72 @@ namespace App_xddq
         {
             var border = new Border { BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 221, 221, 221)), CornerRadius = new CornerRadius(8), Margin = new Thickness(0, 10, 0, 0), Padding = new Thickness(10) };
             var stack = new StackPanel();
-            // create itemsPanel early so header handlers can access it
-            var itemsPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 0) };
 
+            // header with select-all and auto execute
             var header = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
             var selectAll = new CheckBox { Content = "", VerticalAlignment = VerticalAlignment.Center };
-            // properly toggle checkboxes in itemsPanel
-            selectAll.Checked += (s, e) => { foreach (var cb in itemsPanel.Children.OfType<CheckBox>()) cb.IsChecked = true; };
-            selectAll.Unchecked += (s, e) => { foreach (var cb in itemsPanel.Children.OfType<CheckBox>()) cb.IsChecked = false; };
             header.Children.Add(selectAll);
             header.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.Bold, FontSize = 16, Margin = new Thickness(5, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             var autoBtn = new Button { Content = "自动执行", Margin = new Thickness(20, 0, 0, 0) };
-            // wire auto execute to TaskExecutor
+            header.Children.Add(autoBtn);
+            stack.Children.Add(header);
+
+            // panel to hold items vertically
+            var listPanel = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 8, 0, 0) };
+
+            // build item rows
+            foreach (var name in items)
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                var cb = new CheckBox { VerticalAlignment = VerticalAlignment.Center, Tag = name };
+                var lbl = new TextBlock { Text = name, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
+                var runBtn = new Button { Content = "执行", Tag = name, Margin = new Thickness(8, 0, 0, 0) };
+
+                runBtn.Click += async (s, e) =>
+                {
+                    var btn = s as Button; if (btn == null) return;
+                    try
+                    {
+                        btn.IsEnabled = false;
+                        var n = (btn.Tag as string) ?? name;
+                        var funcName = n.EndsWith("功能") ? n : n + "功能";
+                        var res = await _taskExecutor.RunFuncAsync(funcName);
+                        await ShowInfoDialog(res);
+                    }
+                    catch (Exception ex)
+                    {
+                        await ShowInfoDialog("执行出错: " + ex.Message);
+                    }
+                    finally { try { btn.IsEnabled = true; } catch { } }
+                };
+
+                row.Children.Add(cb);
+                row.Children.Add(lbl);
+                row.Children.Add(runBtn);
+                listPanel.Children.Add(row);
+            }
+
+            // wire selectAll to checkboxes
+            selectAll.Checked += (s, e) => { foreach (var p in listPanel.Children.OfType<StackPanel>()) foreach (var c in p.Children.OfType<CheckBox>()) c.IsChecked = true; };
+            selectAll.Unchecked += (s, e) => { foreach (var p in listPanel.Children.OfType<StackPanel>()) foreach (var c in p.Children.OfType<CheckBox>()) c.IsChecked = false; };
+
+            // auto execute uses checked items
             autoBtn.Click += async (s, e) =>
             {
                 try
                 {
                     autoBtn.IsEnabled = false;
-                    // collect selected items from itemsPanel
-                    if (itemsPanel == null)
-                    {
-                        await ShowInfoDialog("未找到项目列表。");
-                        return;
-                    }
-
-                    var selected = itemsPanel.Children.OfType<CheckBox>().Where(cb => cb.IsChecked == true).Select(cb => cb.Tag as string ?? cb.Content?.ToString()).Where(n => !string.IsNullOrEmpty(n)).ToList();
-                    if (!selected.Any())
-                    {
-                        await ShowInfoDialog("请先勾选要执行的功能。");
-                        return;
-                    }
-
-                    // map UI name to funcSteps key: append '功能' if not present
+                    var selected = listPanel.Children.OfType<StackPanel>().SelectMany(p => p.Children.OfType<CheckBox>()).Where(cb => cb.IsChecked == true).Select(cb => cb.Tag as string).Where(n => !string.IsNullOrEmpty(n)).ToList();
+                    if (!selected.Any()) { await ShowInfoDialog("请先勾选要执行的功能。"); return; }
                     var funcNames = selected.Select(n => n.EndsWith("功能") ? n : n + "功能").ToList();
-
-                    // run sequentially
                     var log = await _taskExecutor.RunMultipleFuncsAsync(funcNames);
                     await ShowInfoDialog(log);
                 }
-                catch (Exception ex)
-                {
-                    await ShowInfoDialog("执行出错: " + ex.Message);
-                }
-                finally
-                {
-                    autoBtn.IsEnabled = true;
-                }
+                catch (Exception ex) { await ShowInfoDialog("执行出错: " + ex.Message); }
+                finally { autoBtn.IsEnabled = true; }
             };
 
-            header.Children.Add(autoBtn);
-            stack.Children.Add(header);
-
-            foreach (var name in items)
-            {
-                var cb = new CheckBox { Content = name };
-                // store the actual func key in Tag for future flexibility
-                cb.Tag = name;
-                itemsPanel.Children.Add(cb);
-            }
-            stack.Children.Add(itemsPanel);
+            stack.Children.Add(listPanel);
             border.Child = stack;
             return border;
         }
@@ -635,6 +642,7 @@ namespace App_xddq
             var panel = new StackPanel { Margin = new Thickness(40) };
             panel.Children.Add(new TextBlock { Text = "设置区", FontSize = 24, Margin = new Thickness(0, 0, 0, 20) });
 
+            // Export path
             panel.Children.Add(new TextBlock { Text = "导出日志路径：", FontSize = 16 });
             var pathBox = new TextBox { Text = _settingsManager.GetExportPath(), Width = 600 };
             panel.Children.Add(pathBox);
@@ -643,7 +651,6 @@ namespace App_xddq
             chooseBtn.Click += async (s, e) =>
             {
                 var picker = new Windows.Storage.Pickers.FolderPicker();
-                // Need to initialize with window handle for WinUI3 desktop apps; use helper
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
                 var folder = await picker.PickSingleFolderAsync();
                 if (folder != null)
@@ -654,6 +661,182 @@ namespace App_xddq
                 }
             };
             panel.Children.Add(chooseBtn);
+
+            // Spacer
+            panel.Children.Add(new TextBlock { Text = "", Height = 12 });
+
+            // Func steps configuration
+            panel.Children.Add(new TextBlock { Text = "func_steps.json 源路径：", FontSize = 16 });
+            var funcPathBox = new TextBox { Text = _settingsManager.GetFuncStepsPath() ?? string.Empty, Width = 600 };
+            panel.Children.Add(funcPathBox);
+
+            var funcBtnBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+
+            var chooseFuncBtn = new Button { Content = "选择 func_steps.json 文件", Margin = new Thickness(0, 0, 8, 0) };
+            chooseFuncBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    var picker = new Windows.Storage.Pickers.FileOpenPicker();
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    picker.FileTypeFilter.Add(".json");
+                    var file = await picker.PickSingleFileAsync();
+                    if (file != null)
+                    {
+                        funcPathBox.Text = file.Path;
+                        _settingsManager.SetFuncStepsPath(file.Path);
+                        await ShowInfoDialog("已设置 func_steps.json 源路径。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("选择失败: " + ex.Message);
+                }
+            };
+            funcBtnBar.Children.Add(chooseFuncBtn);
+
+            var reloadFuncBtn = new Button { Content = "重新加载 func_steps.json", Margin = new Thickness(0, 0, 8, 0) };
+            reloadFuncBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    if (_taskExecutor.ReloadFuncSteps(out var msg))
+                    {
+                        await ShowInfoDialog("重新加载成功: " + msg);
+                    }
+                    else
+                    {
+                        await ShowInfoDialog("重新加载失败: " + msg);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("重新加载出错: " + ex.Message);
+                }
+            };
+            funcBtnBar.Children.Add(reloadFuncBtn);
+
+            var copyFuncBtn = new Button { Content = "手动复制并加载 func_steps.json" };
+            copyFuncBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    var picker = new Windows.Storage.Pickers.FileOpenPicker();
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    picker.FileTypeFilter.Add(".json");
+                    var file = await picker.PickSingleFileAsync();
+                    if (file != null)
+                    {
+                        var source = file.Path;
+                        if (_taskExecutor.CopyFuncStepsFrom(source, out var message))
+                        {
+                            _settingsManager.SetFuncStepsPath(source);
+                            funcPathBox.Text = source;
+                            await ShowInfoDialog("复制并加载成功: " + message);
+                        }
+                        else
+                        {
+                            await ShowInfoDialog("复制失败: " + message);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("复制出错: " + ex.Message);
+                }
+            };
+            funcBtnBar.Children.Add(copyFuncBtn);
+
+            panel.Children.Add(funcBtnBar);
+
+            // Spacer
+            panel.Children.Add(new TextBlock { Text = "", Height = 12 });
+
+            // Config.json configuration
+            panel.Children.Add(new TextBlock { Text = "config.json 源路径：", FontSize = 16 });
+            var configPathBox = new TextBox { Text = _settingsManager.GetConfigPath() ?? string.Empty, Width = 600 };
+            panel.Children.Add(configPathBox);
+
+            var configBtnBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 8, 0, 0) };
+
+            var chooseConfigBtn = new Button { Content = "选择 config.json 文件", Margin = new Thickness(0, 0, 8, 0) };
+            chooseConfigBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    var picker = new Windows.Storage.Pickers.FileOpenPicker();
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    picker.FileTypeFilter.Add(".json");
+                    var file = await picker.PickSingleFileAsync();
+                    if (file != null)
+                    {
+                        configPathBox.Text = file.Path;
+                        _settingsManager.SetConfigPath(file.Path);
+                        await ShowInfoDialog("已设置 config.json 源路径。");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("选择失败: " + ex.Message);
+                }
+            };
+            configBtnBar.Children.Add(chooseConfigBtn);
+
+            var copyConfigBtn = new Button { Content = "复制并加载 config.json", Margin = new Thickness(0, 0, 8, 0) };
+            copyConfigBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    var picker = new Windows.Storage.Pickers.FileOpenPicker();
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    picker.FileTypeFilter.Add(".json");
+                    var file = await picker.PickSingleFileAsync();
+                    if (file != null)
+                    {
+                        var source = file.Path;
+                        // copy to app base dir and reload config
+                        try
+                        {
+                            var dest = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
+                            File.Copy(source, dest, true);
+                            _settingsManager.SetConfigPath(source);
+                            if (_configManager.Reload(out var msg))
+                                await ShowInfoDialog("复制并重新加载成功: " + msg);
+                            else
+                                await ShowInfoDialog("复制成功但重新加载失败。请检查日志。");
+                            configPathBox.Text = source;
+                        }
+                        catch (Exception ex)
+                        {
+                            await ShowInfoDialog("复制出错: " + ex.Message);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("复制出错: " + ex.Message);
+                }
+            };
+            configBtnBar.Children.Add(copyConfigBtn);
+
+            var reloadConfigBtn = new Button { Content = "重新加载 config.json" };
+            reloadConfigBtn.Click += async (s, e) =>
+            {
+                try
+                {
+                    if (_configManager.Reload(out var msg))
+                        await ShowInfoDialog("重新加载成功: " + msg);
+                    else
+                        await ShowInfoDialog("重新加载失败。");
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("重新加载失败: " + ex.Message);
+                }
+            };
+            configBtnBar.Children.Add(reloadConfigBtn);
+
+            panel.Children.Add(configBtnBar);
 
             MainFrame.Content = panel;
         }
