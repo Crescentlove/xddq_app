@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace App_xddq
@@ -27,6 +28,10 @@ namespace App_xddq
 
         // Real-time log event
         public event Action<string> LogUpdated;
+
+        // Cancellation support
+        private CancellationTokenSource _cts;
+        public bool IsRunning { get; private set; }
 
         public TaskExecutor(AdbService adbService, IConfigManager configManager)
         {
@@ -65,6 +70,16 @@ namespace App_xddq
             catch { }
         }
 
+        public void Stop()
+        {
+            try
+            {
+                _cts?.Cancel();
+                AppendLog("???????");
+            }
+            catch { }
+        }
+
         public async Task<string> RunFuncAsync(string funcName)
         {
             if (!_funcSteps.ContainsKey(funcName))
@@ -73,39 +88,103 @@ namespace App_xddq
                 AppendLog(msg);
                 return msg;
             }
+
+            if (IsRunning)
+            {
+                var busyMsg = $"????????????: {funcName}";
+                AppendLog(busyMsg);
+                return busyMsg;
+            }
+
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+            IsRunning = true;
+
             var steps = _funcSteps[funcName];
             string log = "";
             AppendLog($"????: {funcName}");
-            foreach (var step in steps)
+            try
             {
-                var line = $"??: [{step.Section}] {step.Key}";
-                log += line + "\n";
-                AppendLog(line);
-                var pos = _configManager.GetPosition(step.Section, step.Key);
-                if (pos == null)
+                foreach (var step in steps)
                 {
-                    var miss = $"?????: {step.Section} - {step.Key}";
-                    AppendLog(miss);
-                    log += miss + "\n";
-                    continue;
+                    if (token.IsCancellationRequested)
+                    {
+                        AppendLog($"???: {funcName}");
+                        return "???";
+                    }
+
+                    var line = $"??: [{step.Section}] {step.Key}";
+                    log += line + "\n";
+                    AppendLog(line);
+                    var pos = _configManager.GetPosition(step.Section, step.Key);
+                    if (pos == null)
+                    {
+                        var miss = $"?????: {step.Section} - {step.Key}";
+                        AppendLog(miss);
+                        log += miss + "\n";
+                        continue;
+                    }
+
+                    // ?? adb tap
+                    await _adbService.RunAdbCommandAsync($"shell input tap {pos.Value.x} {pos.Value.y}");
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(step.Sleep), token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        AppendLog($"?????: {funcName}");
+                        return "???";
+                    }
                 }
-                // ?? adb tap
-                await _adbService.RunAdbCommandAsync($"shell input tap {pos.Value.x} {pos.Value.y}");
-                await Task.Delay(TimeSpan.FromSeconds(step.Sleep));
+
+                AppendLog($"??: {funcName}");
+                return log + "??";
             }
-            AppendLog($"??: {funcName}");
-            return log + "??";
+            finally
+            {
+                IsRunning = false;
+                try { _cts.Dispose(); } catch { }
+                _cts = null;
+            }
         }
 
         public async Task<string> RunMultipleFuncsAsync(IEnumerable<string> funcNames)
         {
-            string log = "";
-            foreach (var name in funcNames)
+            if (IsRunning)
             {
-                var res = await RunFuncAsync(name);
-                log += res + "\n";
+                var busy = "????????";
+                AppendLog(busy);
+                return busy;
             }
-            return log;
+
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+            IsRunning = true;
+            string log = "";
+            AppendLog("????????");
+            try
+            {
+                foreach (var name in funcNames)
+                {
+                    if (token.IsCancellationRequested)
+                    {
+                        AppendLog("???????");
+                        log += "???\n";
+                        break;
+                    }
+                    var res = await RunFuncAsync(name);
+                    log += res + "\n";
+                }
+                AppendLog("??????");
+                return log;
+            }
+            finally
+            {
+                IsRunning = false;
+                try { _cts.Dispose(); } catch { }
+                _cts = null;
+            }
         }
     }
 }

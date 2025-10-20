@@ -16,6 +16,7 @@ namespace App_xddq
         private readonly AdbService _adbService;
         private readonly ConfigManager _configManager;
         private readonly TaskExecutor _taskExecutor;
+        private readonly SettingsManager _settingsManager;
 
         // live log textbox reference
         private TextBox _liveLogTextBox;
@@ -27,6 +28,7 @@ namespace App_xddq
             _adbService = new AdbService();
             _configManager = new ConfigManager();
             _taskExecutor = new TaskExecutor(_adbService, _configManager);
+            _settingsManager = new SettingsManager();
 
             // subscribe to realtime logs
             _taskExecutor.LogUpdated += OnLogUpdated;
@@ -171,6 +173,13 @@ namespace App_xddq
         {
             var scroll = new ScrollViewer { Margin = new Thickness(20) };
             var panel = new StackPanel();
+
+            var topBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0,0,0,10) };
+            var stopBtn = new Button { Content = "停止执行", Margin = new Thickness(0,0,10,0) };
+            stopBtn.Click += (s, e) => { _taskExecutor.Stop(); };
+            topBar.Children.Add(stopBtn);
+            panel.Children.Add(topBar);
+
             panel.Children.Add(CreateFeatureSection("日常任务", new[] {
                 "砍树", "超值礼包", "仙缘", "邮件领取", "轮回殿", "座驾注灵", "道友", "仙树等级"
             }));
@@ -522,6 +531,71 @@ namespace App_xddq
         {
             var panel = new StackPanel { Margin = new Thickness(40) };
             panel.Children.Add(new TextBlock { Text = "日志区", FontSize = 24, Margin = new Thickness(0,0,0,20) });
+
+            // Top buttons: export and clear
+            var btnBar = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+            var exportBtn = new Button { Content = "导出日志", Margin = new Thickness(0, 0, 10, 0) };
+            exportBtn.Click += async (s, e) =>
+            {
+                string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp", "app.log");
+                if (!File.Exists(logPath))
+                {
+                    await ShowInfoDialog("日志文件不存在，无法导出。");
+                    return;
+                }
+                try
+                {
+                    var exportDir = _settingsManager.GetExportPath();
+                    if (string.IsNullOrWhiteSpace(exportDir)) exportDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                    if (!Directory.Exists(exportDir)) Directory.CreateDirectory(exportDir);
+                    var dest = Path.Combine(exportDir, $"app_log_{DateTime.Now:yyyyMMdd_HHmmss}.txt");
+                    File.Copy(logPath, dest, true);
+                    await ShowInfoDialog($"已导出到: {dest}");
+
+                    try
+                    {
+                        // open explorer and select the file
+                        var psi = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "explorer.exe",
+                            Arguments = $"/select,\"{dest}\"",
+                            UseShellExecute = true
+                        };
+                        System.Diagnostics.Process.Start(psi);
+                    }
+                    catch { /* ignore UI open failures */ }
+                }
+                catch (Exception ex)
+                {
+                    await ShowInfoDialog("导出失败: " + ex.Message);
+                }
+            };
+            btnBar.Children.Add(exportBtn);
+
+            var clearBtn = new Button { Content = "清除日志" };
+            clearBtn.Click += async (s, e) =>
+            {
+                var dlg = new ContentDialog { Title = "确认清除日志？", PrimaryButtonText = "确定", CloseButtonText = "取消", XamlRoot = this.Content.XamlRoot };
+                var res = await dlg.ShowAsync();
+                if (res == ContentDialogResult.Primary)
+                {
+                    string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "tmp", "app.log");
+                    try
+                    {
+                        if (File.Exists(logPath)) File.WriteAllText(logPath, string.Empty);
+                        if (_liveLogTextBox != null) _liveLogTextBox.Text = string.Empty;
+                        await ShowInfoDialog("日志已清除。");
+                    }
+                    catch (Exception ex)
+                    {
+                        await ShowInfoDialog("清除失败: " + ex.Message);
+                    }
+                }
+            };
+            btnBar.Children.Add(clearBtn);
+
+            panel.Children.Add(btnBar);
+
             var logText = new TextBox { FontSize = 14, TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, IsReadOnly = true, Height = 400 };
             logText.Text = LoadLog();
             _liveLogTextBox = logText; // save reference for live updates
@@ -559,46 +633,29 @@ namespace App_xddq
         private void ShowSettingsPage()
         {
             var panel = new StackPanel { Margin = new Thickness(40) };
-            panel.Children.Add(new TextBlock { Text = "设置区", FontSize = 24, Margin = new Thickness(0,0,0,20) });
-            panel.Children.Add(new TextBlock { Text = "配色风格：", FontSize = 16 });
-            var colorCombo = new ComboBox { Width = 180, Margin = new Thickness(0,5,0,20) };
-            colorCombo.Items.Add("默认");
-            colorCombo.Items.Add("深色");
-            colorCombo.Items.Add("浅色");
-            colorCombo.SelectedIndex = 0;
-            colorCombo.SelectionChanged += ColorCombo_SelectionChanged;
-            panel.Children.Add(colorCombo);
-            panel.Children.Add(new TextBlock { Text = "图标风格：", FontSize = 16 });
-            var iconCombo = new ComboBox { Width = 180, Margin = new Thickness(0,5,0,20) };
-            iconCombo.Items.Add("默认");
-            iconCombo.Items.Add("圆形");
-            iconCombo.Items.Add("方形");
-            iconCombo.SelectedIndex = 0;
-            iconCombo.SelectionChanged += IconCombo_SelectionChanged;
-            panel.Children.Add(iconCombo);
-            MainFrame.Content = panel;
-        }
+            panel.Children.Add(new TextBlock { Text = "设置区", FontSize = 24, Margin = new Thickness(0, 0, 0, 20) });
 
-        private void ColorCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            var combo = sender as ComboBox;
-            switch (combo.SelectedIndex)
+            panel.Children.Add(new TextBlock { Text = "导出日志路径：", FontSize = 16 });
+            var pathBox = new TextBox { Text = _settingsManager.GetExportPath(), Width = 600 };
+            panel.Children.Add(pathBox);
+
+            var chooseBtn = new Button { Content = "选择路径", Margin = new Thickness(0, 10, 0, 0) };
+            chooseBtn.Click += async (s, e) =>
             {
-                case 1:// 深色
-                    Sidebar.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 45, 45, 48));
-                    break;
-                case 2:// 浅色
-                    Sidebar.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 240, 240, 240));
-                    break;
-                default:
-                    Sidebar.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 45, 45, 48));
-                    break;
-            }
-        }
+                var picker = new Windows.Storage.Pickers.FolderPicker();
+                // Need to initialize with window handle for WinUI3 desktop apps; use helper
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                var folder = await picker.PickSingleFolderAsync();
+                if (folder != null)
+                {
+                    pathBox.Text = folder.Path;
+                    _settingsManager.SetExportPath(folder.Path);
+                    await ShowInfoDialog("已设置导出路径。");
+                }
+            };
+            panel.Children.Add(chooseBtn);
 
-        private void IconCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            // 这里只是预留，后续可根据选择切换不同风格的图标
+            MainFrame.Content = panel;
         }
 
         private string LoadReadme()
