@@ -8,12 +8,13 @@ using System.Threading.Tasks;
 using System.Linq;
 using System.Collections.Generic;
 using Microsoft.UI.Xaml.Media; // for VisualTreeHelper
+using Microsoft.UI.Xaml.Input;
 
 namespace App_xddq
 {
     public sealed partial class MainWindow : Window
     {
-        private bool _sidebarExpanded = false;
+        // sidebar is fixed (store-like) — no expand/collapse state
         // Add shared services
         private readonly AdbService _adbService;
         private readonly ConfigManager _configManager;
@@ -36,6 +37,8 @@ namespace App_xddq
             // subscribe to realtime logs
             _taskExecutor.LogUpdated += OnLogUpdated;
 
+            // initialize sidebar selection (fixed sidebar)
+            try { SetSelectedNav("Home"); } catch { }
             ShowHomePage();
         }
 
@@ -59,19 +62,201 @@ namespace App_xddq
             catch { }
         }
 
-        private void HamburgerButton_Click(object sender, RoutedEventArgs e)
+        // hamburger/expand removed — sidebar is fixed in store style
+
+        private void HomeNav_Click(object sender, RoutedEventArgs e) { SetSelectedNav("Home"); ShowHomePage(); }
+        private void FeatureNav_Click(object sender, RoutedEventArgs e) { SetSelectedNav("Feature"); ShowFeaturePage(); }
+        private void ConfigNav_Click(object sender, RoutedEventArgs e) { SetSelectedNav("Config"); ShowConfigPage(); }
+        private void LogNav_Click(object sender, RoutedEventArgs e) { SetSelectedNav("Log"); ShowLogPage(); }
+        private void AboutNav_Click(object sender, RoutedEventArgs e) { SetSelectedNav("About"); ShowAboutPage(); }
+        private void SettingsNav_Click(object sender, RoutedEventArgs e) { SetSelectedNav("Settings"); ShowSettingsPage(); }
+
+        private void AccountButton_Click(object sender, RoutedEventArgs e)
         {
-            _sidebarExpanded = !_sidebarExpanded;
-            Sidebar.Width = _sidebarExpanded ? 180 : 60;
-            // 可选择性地显示/隐藏图标旁边的文本（尚未实现）
+            try
+            {
+                var dlg = new ContentDialog { Title = "账户", Content = "未登录。", CloseButtonText = "关闭", XamlRoot = this.Content.XamlRoot };
+                _ = dlg.ShowAsync();
+            }
+            catch { }
         }
 
-        private void HomeNav_Click(object sender, RoutedEventArgs e) => ShowHomePage();
-        private void FeatureNav_Click(object sender, RoutedEventArgs e) => ShowFeaturePage();
-        private void ConfigNav_Click(object sender, RoutedEventArgs e) => ShowConfigPage();
-        private void LogNav_Click(object sender, RoutedEventArgs e) => ShowLogPage();
-        private void AboutNav_Click(object sender, RoutedEventArgs e) => ShowAboutPage();
-        private void SettingsNav_Click(object sender, RoutedEventArgs e) => ShowSettingsPage();
+        private void NavButton_PointerEntered(object sender, PointerRoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Button b)
+                {
+                    b.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(40, 255, 255, 255));
+                }
+            }
+            catch { }
+        }
+
+        private void NavButton_PointerExited(object sender, PointerRoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Button b)
+                {
+                    // keep selected button highlighted
+                    if (IsButtonSelected(b))
+                    {
+                        b.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                    }
+                    else
+                    {
+                        b.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void NavButton_PointerPressed(object sender, PointerRoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Button b)
+                {
+                    b.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 0, 100, 195));
+                }
+            }
+            catch { }
+        }
+
+        private void NavButton_PointerReleased(object sender, PointerRoutedEventArgs e)
+        {
+            try
+            {
+                if (sender is Button b)
+                {
+                    // restore hover/selected state
+                    if (IsButtonSelected(b))
+                    {
+                        b.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                    }
+                    else
+                    {
+                        b.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private bool IsButtonSelected(Button b)
+        {
+            try
+            {
+                if (b == null) return false;
+                if (b == HomeNav) return GetCurrentSelectedKey() == "Home";
+                if (b == FeatureNav) return GetCurrentSelectedKey() == "Feature";
+                if (b == ConfigNav) return GetCurrentSelectedKey() == "Config";
+                if (b == LogNav) return GetCurrentSelectedKey() == "Log";
+                if (b == AboutNav) return GetCurrentSelectedKey() == "About";
+                if (b == SettingsNav) return GetCurrentSelectedKey() == "Settings";
+            }
+            catch { }
+            return false;
+        }
+
+        // we store current selected key in a field
+        private string _currentNavKey = "";
+        private string GetCurrentSelectedKey() => _currentNavKey;
+
+        private void SetCurrentSelectedKey(string key)
+        {
+            _currentNavKey = key;
+        }
+
+        // Visual helpers to emulate Microsoft Store sidebar behavior
+        private void SetSelectedNav(string key)
+        {
+            try
+            {
+                SetCurrentSelectedKey(key);
+
+                var defaultBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 200, 200, 200));
+                var selectedBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
+
+                var homeIcon = FindNamed<FontIcon>("HomeIcon");
+                var featIcon = FindNamed<FontIcon>("FeatureIcon");
+                var cfgIcon = FindNamed<FontIcon>("ConfigIcon");
+                var logIcon = FindNamed<FontIcon>("LogIcon");
+                var aboutIcon = FindNamed<FontIcon>("AboutIcon");
+                var setIcon = FindNamed<FontIcon>("SettingsIcon");
+
+                var homeLabel = FindNamed<TextBlock>("HomeLabel");
+                var featLabel = FindNamed<TextBlock>("FeatureLabel");
+                var cfgLabel = FindNamed<TextBlock>("ConfigLabel");
+                var logLabel = FindNamed<TextBlock>("LogLabel");
+                var aboutLabel = FindNamed<TextBlock>("AboutLabel");
+                var setLabel = FindNamed<TextBlock>("SettingsLabel");
+
+                // reset all buttons
+                var buttons = new List<Button> { HomeNav, FeatureNav, ConfigNav, LogNav, AboutNav, SettingsNav };
+                foreach (var btn in buttons)
+                {
+                    try { btn.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)); } catch { }
+                }
+
+                if (homeIcon != null) homeIcon.Foreground = defaultBrush;
+                if (featIcon != null) featIcon.Foreground = defaultBrush;
+                if (cfgIcon != null) cfgIcon.Foreground = defaultBrush;
+                if (logIcon != null) logIcon.Foreground = defaultBrush;
+                if (aboutIcon != null) aboutIcon.Foreground = defaultBrush;
+                if (setIcon != null) setIcon.Foreground = defaultBrush;
+
+                if (homeIcon != null) homeIcon.Opacity = 0.85;
+                if (featIcon != null) featIcon.Opacity = 0.85;
+                if (cfgIcon != null) cfgIcon.Opacity = 0.85;
+                if (logIcon != null) logIcon.Opacity = 0.85;
+                if (aboutIcon != null) aboutIcon.Opacity = 0.85;
+                if (setIcon != null) setIcon.Opacity = 0.85;
+
+                switch (key)
+                {
+                    case "Home":
+                        if (homeIcon != null) { homeIcon.Foreground = selectedBrush; homeIcon.Opacity = 1; }
+                        HomeNav.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                        break;
+                    case "Feature":
+                        if (featIcon != null) { featIcon.Foreground = selectedBrush; featIcon.Opacity = 1; }
+                        FeatureNav.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                        break;
+                    case "Config":
+                        if (cfgIcon != null) { cfgIcon.Foreground = selectedBrush; cfgIcon.Opacity = 1; }
+                        ConfigNav.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                        break;
+                    case "Log":
+                        if (logIcon != null) { logIcon.Foreground = selectedBrush; logIcon.Opacity = 1; }
+                        LogNav.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                        break;
+                    case "About":
+                        if (aboutIcon != null) { aboutIcon.Foreground = selectedBrush; aboutIcon.Opacity = 1; }
+                        AboutNav.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                        break;
+                    case "Settings":
+                        if (setIcon != null) { setIcon.Foreground = selectedBrush; setIcon.Opacity = 1; }
+                        SettingsNav.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(60, 0, 120, 215));
+                        break;
+                }
+
+                // always show labels for fixed sidebar
+                try
+                {
+                    if (homeLabel != null) homeLabel.Visibility = Visibility.Visible;
+                    if (featLabel != null) featLabel.Visibility = Visibility.Visible;
+                    if (cfgLabel != null) cfgLabel.Visibility = Visibility.Visible;
+                    if (logLabel != null) logLabel.Visibility = Visibility.Visible;
+                    if (aboutLabel != null) aboutLabel.Visibility = Visibility.Visible;
+                    if (setLabel != null) setLabel.Visibility = Visibility.Visible;
+                }
+                catch { }
+            }
+            catch { }
+        }
 
         private void ShowHomePage()
         {
@@ -1068,6 +1253,19 @@ namespace App_xddq
                 });
             }
             catch { }
+        }
+
+        // helper to find named element under window content
+        private T FindNamed<T>(string name) where T : class
+        {
+            try
+            {
+                var root = this.Content as DependencyObject;
+                if (root == null) return null;
+                var el = FindElementByName(root, name);
+                return el as T;
+            }
+            catch { return null; }
         }
     }
 }
