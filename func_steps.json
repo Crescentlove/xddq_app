@@ -351,6 +351,8 @@
     { "section": "妖盟", "key": "妖邪挑战", "sleep": 1 },
     { "section": "妖邪挑战", "key": "BUZHEN", "sleep": 1 },
     { "section": "妖邪挑战", "key": "ZHAN", "sleep": 1 },
+    { "section": "妖邪挑战", "key": "确认", "sleep": 1 },
+    { "section": "妖邪挑战", "key": "ZHAN", "sleep": 1 },
     { "section": "妖邪挑战", "key": "ZHAN", "sleep": 1 },
     { "section": "妖邪挑战", "key": "JIANG", "sleep": 1 },
     { "section": "妖邪挑战", "key": "LINGQU", "sleep": 1 },
